@@ -1,0 +1,263 @@
+---
+title: "Detecting SMS Spam Using Machine Learning"
+author: "By : Bayu Raka Janasri"
+date: "6/14/2021"
+output:
+  html_document:
+    theme: flatly
+    higlight: zenburn
+    toc: true
+    toc_float:
+      collapsed: true
+    df_print: paged
+    number_sections : True
+---
+
+# Introduction
+
+![](sms spam.jpeg)
+
+Always get spam sms from anonim number? 
+
+We get same problem here!! 
+
+So this time we will build machine learning model for detecting spam messages.
+  
+Source dataset : https://www.kaggle.com/shravan3273/sms-spam
+
+# Import Library
+
+```{r, message=FALSE}
+library(dplyr)
+library(e1071)
+library(tm)
+library(caret)
+library(wordcloud)
+library(RColorBrewer)
+```
+
+# Read Data
+
+```{r}
+sms <- read.csv("spamraw.csv")
+```
+
+# Data Wrangling
+
+**Check data type**
+
+```{r}
+glimpse(sms)
+```
+**Check first 5 rows of our dataset**
+
+```{r}
+head(sms,5)
+```
+**Change data type**
+
+We have to change data type into factor.
+
+```{r}
+sms <- sms %>% 
+    mutate(type = as.factor(type))
+    
+head(sms)
+```
+**Check Missing Values**
+
+```{r}
+colSums(is.na(sms))
+```
+
+There is no missing value at our dataset.
+
+# Exploratory Data Analysis (EDA)
+
+**Check propotion our dataset**
+
+```{r}
+prop.table(table(sms$type))
+```
+
+**See first 5 sms**
+
+```{r}
+head(sms$text,5)
+```
+
+## Data Pre-processing
+
+### Text to Corpus
+
+We use package `tm` to text mining. We will change data to text with function `VCorpus()`. 
+
+**Change Text to Corpus**
+
+```{r}
+sms.corpus <- VCorpus(VectorSource(sms$text))
+```
+
+### Text Cleansing
+
+We have to remove some numbers, changing to lowercase, remove some punctuation mark, etc.
+
+```{r}
+sms.corpus <- sms.corpus %>% 
+              tm_map(removeNumbers) %>% # remove numerical character
+              tm_map(content_transformer(tolower)) %>% #lowercase
+              tm_map(removeWords, stopwords("english")) %>% # remove english stopwords (and, the, am)
+              tm_map(removePunctuation) %>%  # remove punctuation mark
+              tm_map(stemDocument) %>% # stem word (e.g. from walking to walk)
+              tm_map(stripWhitespace) # strip double white space
+```
+
+**Check text content**
+
+Get content at row 111.
+
+```{r}
+sms.corpus[[111]]$content
+```
+
+### Document-Term Matrix (DTM)
+
+After cleansing our text we have to change text into `DTM`, the process is called **Tokenization**. Splitting one sentence into others `term`.
+
+```{r}
+sms.dtm <- DocumentTermMatrix(sms.corpus)
+as.data.frame(head(as.matrix(sms.dtm)))
+```
+
+**Inspect DTM**
+
+Check our dtm data.
+
+```{r}
+inspect(sms.dtm)
+sms[1000,"text"]
+```
+
+## Cross Validation
+
+Before making model we have to split our data train into `data train` and `data test` with the composition 80% as data train.
+
+```{r}
+set.seed(123)
+
+index <- sample(nrow(sms.dtm), nrow(sms.dtm)*0.80)
+
+data_train <- sms.dtm[index, ]
+data_test <- sms.dtm[-index,]
+```
+
+**Prepare data label target**
+
+```{r}
+label_train <- sms[index, "type"]
+label_test <- sms[-index, "type"]
+```
+
+**Check propotion class target data train**
+
+```{r}
+prop.table(table(label_train))
+```
+
+We can see our propotion here where is ham **86%** and spam **13%**.
+
+## Further Data Pre-processing
+
+```{r}
+sms_freq <- findFreqTerms(x = data_train, lowfreq = 20)
+```
+
+**Check** `sms_freq` **head**
+
+```{r}
+head(sms_freq, 20)
+```
+
+**Make dataset that words only appear at `sms_freq`**
+
+```{r}
+data_train <- data_train[, sms_freq]
+```
+
+**Make Bernauli Converter**
+
+```{r}
+# fungsi DIY
+bernoulli_conv <- function(x){
+  x <- as.factor(ifelse(x > 0, 1, 0))
+  return(x)
+}
+
+# coba fungsi
+bernoulli_conv(c(0,1,3,0,12,4,0.3))
+```
+
+**Input Bernoulli Converter into `data_test` and `data_train`:**
+
+```{r}
+data_train_bn <- apply(X = data_train, MARGIN = 2, FUN = bernoulli_conv)
+data_test_bn <- apply(X = data_test, MARGIN = 2, FUN = bernoulli_conv)
+```
+
+**See the result**
+
+```{r}
+data_train_bn[20:30, 50:60]
+```
+# Model Fitting
+
+We make `Naive Bayes` model based on our dataset that we already have processed.
+
+```{r}
+model_naive <- naiveBayes(x = data_train_bn,
+                          y = label_train, 
+                          laplace = 1)
+```
+
+Change into dataframe if we want to see data from `data_train_bn`.
+```{r}
+as.data.frame(head(data_train_bn))
+```
+
+## Prediction
+
+We try to predict our target at data test and save into `sms_predClass`.
+
+```{r}
+sms_predClass <- predict(object = model_naive, 
+                         newdata = data_test_bn,
+                         type = "class")
+
+head(sms_predClass)
+```
+
+## Model Evaluation
+
+We use `confussion Matrix` to evaluate our `Naive Bayes` model.
+
+```{r}
+result <- confusionMatrix(data = sms_predClass, # hasil prediksi
+                reference = label_test, # label aktual
+                positive = "spam") 
+```
+
+
+# Conclusion
+
+```{r}
+result
+```
+Based on result above we got quite good model, our `accuracy` is **97%**, `sensitivity` is **84%**, `specificity` is **99%**, and `precision` is **93%**. We can get conclusion, our model is good to be detecting spam.
+
+**Make wordcloud**
+
+```{r}
+wordcloud(words = sms.corpus, min.freq = 100, random.order = FALSE, rot.per=0.35, colors=brewer.pal(12, "Paired"))
+```
+
+From word cloud above, we can see words **call, now, get, can, will, come, free, just, etc** are mostly appear at the messages.
